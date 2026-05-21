@@ -4,6 +4,13 @@
     update_cache: yes
     cache_valid_time: 3600
 
+- name: Install gnupg for PPA support
+  apt:
+    name:
+      - gnupg
+      - software-properties-common
+    state: present
+
 - name: Add Redis PPA for specific versions
   apt_repository:
     repo: ppa:redislabs/redis
