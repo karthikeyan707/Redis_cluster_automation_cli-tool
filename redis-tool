@@ -58,7 +58,9 @@ class RedisTool:
                 print(f"✓ {ansible_version}")
                 
                 # Check Ansible version is 2.14+
-                version_parts = ansible_version.split()[1].split('.')
+                # Handle format: "ansible-playbook [core 2.15.13]" or "ansible-playbook 2.15.13"
+                version_str = ansible_version.split()[-1]  # Get last part which should be version
+                version_parts = version_str.split('.')
                 major = int(version_parts[0])
                 minor = int(version_parts[1])
                 if major < 2 or (major == 2 and minor < 14):
