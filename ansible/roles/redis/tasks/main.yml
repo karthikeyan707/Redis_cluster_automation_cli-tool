@@ -53,21 +53,10 @@
     owner: redis
     group: redis
     mode: '0644'
-  notify: restart redis
 
-- name: Create Redis systemd service
-  template:
-    src: redis.service.j2
-    dest: /etc/systemd/system/redis.service
-    mode: '0644'
-  notify: reload systemd
-
-- name: Enable and start Redis
-  systemd:
-    name: redis
-    enabled: yes
-    state: started
-    daemon_reload: yes
+- name: Start Redis directly
+  command: redis-server /etc/redis/redis.conf --daemonize yes
+  become: yes
 
 - name: Wait for Redis to be ready
   wait_for:
