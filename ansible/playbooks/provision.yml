@@ -8,50 +8,64 @@
   roles:
     - redis
 
+- name: Wait for Redis to be ready
+  hosts: redis_cluster
+  become: yes
+  tasks:
+    - name: Wait for Redis to start
+      wait_for:
+        port: 6379
+        delay: 5
+        timeout: 60
+
 - name: Initialize Redis Cluster
   hosts: redis_masters[0]
   become: yes
   tasks:
-    - name: Create Redis Cluster
+    - name: Create Redis Cluster with automatic replica assignment
       command: >
         redis-cli --cluster create
         10.10.0.11:6379
         10.10.0.12:6379
         10.10.0.13:6379
+        10.10.0.14:6379
+        10.10.0.15:6379
+        10.10.0.16:6379
         --cluster-replicas 1
         --cluster-yes
       register: cluster_create
-      ignore_errors: yes
+
+    - name: Display cluster creation result
+      debug:
+        msg: "{{ cluster_create.stdout }}"
 
     - name: Wait for cluster to stabilize
-      wait_for:
-        timeout: 10
+      pause:
+        seconds: 10
 
-- name: Add replicas to cluster
+- name: Verify cluster state
   hosts: redis_masters[0]
   become: yes
   tasks:
-    - name: Add replica nodes
-      command: >
-        redis-cli --cluster add-node
-        {{ item }}:6379
-        10.10.0.11:6379
-        --cluster-slave
-      loop:
-        - 10.10.0.14
-        - 10.10.0.15
-        - 10.10.0.16
-      ignore_errors: yes
+    - name: Check cluster state
+      command: redis-cli CLUSTER INFO
+      register: cluster_info
+
+    - name: Display cluster info
+      debug:
+        msg: "{{ cluster_info.stdout_lines }}"
 
 - name: Seed test data
   hosts: redis_masters[0]
   become: yes
   tasks:
     - name: Seed 1000 test keys
-      script: ../scripts/seed_data.sh
+      shell: >
+        for i in $(seq 1 1000); do
+          redis-cli SET "key:$i" "value:$i"
+        done
       register: seed_result
-      ignore_errors: yes
 
     - name: Display seed result
       debug:
-        msg: "Data seeding completed: {{ seed_result.stdout | default('Failed') }}"
+        msg: "Data seeding completed"
