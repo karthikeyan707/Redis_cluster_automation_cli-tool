@@ -21,7 +21,19 @@
       run_once: true
 
     - name: Verify data integrity
-      script: ../scripts/verify_data.sh
+      shell: >
+        missing_keys=0;
+        for i in $(seq 1 1000); do
+          value=$(redis-cli GET "key:$i");
+          if [ "$value" != "value:$i" ]; then
+            missing_keys=$((missing_keys + 1));
+          fi;
+        done;
+        if [ $missing_keys -eq 0 ]; then
+          echo "PASS: All 1000 keys verified";
+        else
+          echo "FAIL: $missing_keys keys missing or incorrect";
+        fi
       register: data_verify
       run_once: true
       delegate_to: redis-node-1
@@ -32,7 +44,7 @@
       run_once: true
 
     - name: Check Redis versions
-      command: redis-cli --version
+      command: redis-server --version
       register: redis_version
 
     - name: Display Redis versions

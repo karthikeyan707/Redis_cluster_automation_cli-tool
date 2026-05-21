@@ -7,38 +7,24 @@
     target_version: "{{ target_version | default('7.2.6') }}"
 
   tasks:
-    - name: Stop Redis service
-      systemd:
-        name: redis
+    - name: Stop Redis
+      command: pkill redis-server
+      ignore_errors: yes
+
+    - name: Wait for Redis to stop
+      wait_for:
+        port: 6379
         state: stopped
+        timeout: 30
 
-    - name: Download new Redis source
-      get_url:
-        url: "http://download.redis.io/releases/redis-{{ target_version }}.tar.gz"
-        dest: /tmp/redis-{{ target_version }}.tar.gz
-        mode: '0644'
+    - name: Upgrade Redis package
+      apt:
+        name: redis-server
+        state: latest
+        update_cache: yes
 
-    - name: Extract new Redis source
-      unarchive:
-        src: /tmp/redis-{{ target_version }}.tar.gz
-        dest: /tmp
-        remote_src: yes
-
-    - name: Build new Redis
-      command: make
-      args:
-        chdir: /tmp/redis-{{ target_version }}
-
-    - name: Install new Redis
-      command: make install
-      args:
-        chdir: /tmp/redis-{{ target_version }}
-
-    - name: Start Redis service
-      systemd:
-        name: redis
-        state: started
-        enabled: yes
+    - name: Start Redis
+      command: redis-server /etc/redis/redis.conf --daemonize yes
 
     - name: Wait for Redis to be ready
       wait_for:
@@ -47,9 +33,9 @@
         timeout: 30
 
     - name: Verify Redis version
-      command: redis-cli --version
+      command: redis-server --version
       register: redis_version_check
 
     - name: Display upgrade progress
       debug:
-        msg: "[{{ ansible_play_hosts | index(inventory_hostname) + 1 }}/{{ ansible_play_hosts | length }}] Upgraded {{ inventory_hostname }} to Redis {{ target_version }}"
+        msg: "[{{ ansible_play_hosts | index(inventory_hostname) + 1 }}/{{ ansible_play_hosts | length }}] Upgraded {{ inventory_hostname }}"
