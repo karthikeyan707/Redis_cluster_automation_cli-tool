@@ -146,7 +146,26 @@ class RedisTool:
         # Wait for SSH to be ready
         print("Waiting for SSH to be ready on all nodes...")
         import time
-        time.sleep(30)
+        time.sleep(60)
+        
+        # Verify SSH is ready by testing connection to first node
+        print("Verifying SSH connectivity...")
+        max_retries = 10
+        for i in range(max_retries):
+            try:
+                subprocess.run(['ssh', '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=5',
+                              '-i', os.path.join(self.infra_dir, 'ssh-keys', 'id_rsa'),
+                              'root@10.10.0.11', 'echo', 'SSH ready'],
+                             capture_output=True, check=True, timeout=10)
+                print("✓ SSH is ready")
+                break
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                if i < max_retries - 1:
+                    print(f"SSH not ready yet, waiting... ({i+1}/{max_retries})")
+                    time.sleep(10)
+                else:
+                    print("✗ SSH failed to become ready")
+                    sys.exit(1)
 
     def provision(self, version, masters, replicas_per_master):
         """Provision Redis cluster"""
