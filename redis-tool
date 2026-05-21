@@ -117,10 +117,26 @@ class RedisTool:
         
         # Start containers
         runtime = self.get_container_runtime()
-        compose_cmd = 'podman-compose' if runtime == 'podman' else 'docker-compose'
+        
+        # Determine compose command (handle both docker-compose and docker compose)
+        if runtime == 'podman':
+            compose_cmd = ['podman-compose']
+        else:
+            # Try docker-compose first, then docker compose (Docker Compose V2)
+            try:
+                subprocess.run(['docker-compose', '--version'], capture_output=True, check=True)
+                compose_cmd = ['docker-compose']
+            except (FileNotFoundError, subprocess.CalledProcessError):
+                try:
+                    subprocess.run(['docker', 'compose', 'version'], capture_output=True, check=True)
+                    compose_cmd = ['docker', 'compose']
+                except (FileNotFoundError, subprocess.CalledProcessError):
+                    print("✗ Neither docker-compose nor docker compose found")
+                    print("  Install Docker Compose: https://docs.docker.com/compose/install/")
+                    sys.exit(1)
         
         try:
-            subprocess.run([compose_cmd, '-f', os.path.join(self.infra_dir, 'compose.yml'), 'up', '-d'],
+            subprocess.run(compose_cmd + ['-f', os.path.join(self.infra_dir, 'compose.yml'), 'up', '-d'],
                          cwd=self.infra_dir, check=True)
             print("✓ Container infrastructure started")
         except subprocess.CalledProcessError:
