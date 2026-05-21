@@ -1,0 +1,34 @@
+---
+- name: Check Redis Cluster Status
+  hosts: redis_cluster
+  become: yes
+  tasks:
+    - name: Get Redis cluster info
+      command: redis-cli CLUSTER INFO
+      register: cluster_info
+      run_once: true
+      delegate_to: redis-node-1
+
+    - name: Get Redis cluster nodes
+      command: redis-cli CLUSTER NODES
+      register: cluster_nodes
+      run_once: true
+      delegate_to: redis-node-1
+
+    - name: Get Redis info for each node
+      command: redis-cli INFO
+      register: redis_info
+
+    - name: Display cluster info
+      debug:
+        msg: "{{ cluster_info.stdout_lines }}"
+      run_once: true
+
+    - name: Display cluster nodes
+      debug:
+        msg: "{{ cluster_nodes.stdout_lines }}"
+      run_once: true
+
+    - name: Display individual node info
+      debug:
+        msg: "{{ inventory_hostname }}: {{ redis_info.stdout_lines | select('search', 'redis_version') | list }}"

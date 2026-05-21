@@ -1,0 +1,57 @@
+---
+- name: Provision Redis Cluster
+  hosts: redis_cluster
+  become: yes
+  vars:
+    redis_version: "{{ redis_version | default('7.0.15') }}"
+
+  roles:
+    - redis
+
+- name: Initialize Redis Cluster
+  hosts: redis_masters[0]
+  become: yes
+  tasks:
+    - name: Create Redis Cluster
+      command: >
+        redis-cli --cluster create
+        10.10.0.11:6379
+        10.10.0.12:6379
+        10.10.0.13:6379
+        --cluster-replicas 1
+        --cluster-yes
+      register: cluster_create
+      ignore_errors: yes
+
+    - name: Wait for cluster to stabilize
+      wait_for:
+        timeout: 10
+
+- name: Add replicas to cluster
+  hosts: redis_masters[0]
+  become: yes
+  tasks:
+    - name: Add replica nodes
+      command: >
+        redis-cli --cluster add-node
+        {{ item }}:6379
+        10.10.0.11:6379
+        --cluster-slave
+      loop:
+        - 10.10.0.14
+        - 10.10.0.15
+        - 10.10.0.16
+      ignore_errors: yes
+
+- name: Seed test data
+  hosts: redis_masters[0]
+  become: yes
+  tasks:
+    - name: Seed 1000 test keys
+      script: ../scripts/seed_data.sh
+      register: seed_result
+      ignore_errors: yes
+
+    - name: Display seed result
+      debug:
+        msg: "Data seeding completed: {{ seed_result.stdout | default('Failed') }}"

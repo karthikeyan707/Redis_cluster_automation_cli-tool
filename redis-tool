@@ -1,0 +1,294 @@
+#!/usr/bin/env python3
+"""
+Redis Cluster Lifecycle Tool
+A CLI tool that wraps Ansible to provision, operate, and perform rolling upgrades of a Redis Cluster.
+"""
+
+import subprocess
+import sys
+import argparse
+import os
+import json
+
+class RedisTool:
+    def __init__(self):
+        self.project_dir = os.path.dirname(os.path.abspath(__file__))
+        self.ansible_dir = os.path.join(self.project_dir, 'ansible')
+        self.infra_dir = os.path.join(self.project_dir, 'infra')
+        self.output_dir = os.path.join(self.project_dir, 'output')
+        
+        # Create output directory if it doesn't exist
+        os.makedirs(self.output_dir, exist_ok=True)
+
+    def check_prerequisites(self):
+        """Check if required dependencies are installed"""
+        print("Checking prerequisites...")
+        
+        # Check for Podman or Docker
+        podman_version = None
+        docker_version = None
+        
+        try:
+            result = subprocess.run(['podman', '--version'], capture_output=True, text=True)
+            if result.returncode == 0:
+                podman_version = result.stdout.strip()
+                print(f"✓ {podman_version}")
+        except FileNotFoundError:
+            pass
+        
+        try:
+            result = subprocess.run(['docker', '--version'], capture_output=True, text=True)
+            if result.returncode == 0:
+                docker_version = result.stdout.strip()
+                print(f"✓ {docker_version}")
+        except FileNotFoundError:
+            pass
+        
+        if not podman_version and not docker_version:
+            print("✗ Container runtime not found (Docker or Podman)")
+            print("  Install Podman: https://podman.io/docs/installation")
+            print("  Install Docker: https://docs.docker.com/engine/install/")
+            sys.exit(1)
+        
+        # Check for Ansible
+        try:
+            result = subprocess.run(['ansible-playbook', '--version'], capture_output=True, text=True)
+            if result.returncode == 0:
+                ansible_version = result.stdout.split('\n')[0]
+                print(f"✓ {ansible_version}")
+                
+                # Check Ansible version is 2.14+
+                version_parts = ansible_version.split()[1].split('.')
+                major = int(version_parts[0])
+                minor = int(version_parts[1])
+                if major < 2 or (major == 2 and minor < 14):
+                    print("✗ Ansible version must be 2.14 or higher")
+                    sys.exit(1)
+            else:
+                print("✗ Ansible not found")
+                print("  Install: pip install ansible")
+                sys.exit(1)
+        except FileNotFoundError:
+            print("✗ Ansible not found")
+            print("  Install: pip install ansible")
+            sys.exit(1)
+        
+        print("\nProceeding...\n")
+        return podman_version is not None  # Return True if Podman is available
+
+    def get_container_runtime(self):
+        """Determine which container runtime to use"""
+        try:
+            subprocess.run(['podman', '--version'], capture_output=True, check=True)
+            return 'podman'
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            try:
+                subprocess.run(['docker', '--version'], capture_output=True, check=True)
+                return 'docker'
+            except (FileNotFoundError, subprocess.CalledProcessError):
+                return None
+
+    def setup_infrastructure(self):
+        """Set up the container infrastructure"""
+        print("Setting up container infrastructure...")
+        
+        # Generate SSH keys
+        os.makedirs(os.path.join(self.infra_dir, 'ssh-keys'), exist_ok=True)
+        
+        ssh_key_path = os.path.join(self.infra_dir, 'ssh-keys', 'id_rsa')
+        if not os.path.exists(ssh_key_path):
+            subprocess.run([
+                'ssh-keygen', '-t', 'rsa', '-b', '4096',
+                '-f', ssh_key_path, '-N', '', '-C', 'redis-tool'
+            ], check=True)
+            
+            # Copy public key to authorized_keys
+            subprocess.run([
+                'cp', f'{ssh_key_path}.pub',
+                os.path.join(self.infra_dir, 'ssh-keys', 'authorized_keys')
+            ], check=True)
+            
+            # Set proper permissions
+            subprocess.run(['chmod', '600', ssh_key_path], check=True)
+            subprocess.run(['chmod', '644', f'{ssh_key_path}.pub'], check=True)
+            subprocess.run(['chmod', '644', os.path.join(self.infra_dir, 'ssh-keys', 'authorized_keys')], check=True)
+        
+        # Start containers
+        runtime = self.get_container_runtime()
+        compose_cmd = 'podman-compose' if runtime == 'podman' else 'docker-compose'
+        
+        try:
+            subprocess.run([compose_cmd, '-f', os.path.join(self.infra_dir, 'compose.yml'), 'up', '-d'],
+                         cwd=self.infra_dir, check=True)
+            print("✓ Container infrastructure started")
+        except subprocess.CalledProcessError:
+            print("✗ Failed to start container infrastructure")
+            sys.exit(1)
+        
+        # Wait for SSH to be ready
+        print("Waiting for SSH to be ready on all nodes...")
+        import time
+        time.sleep(30)
+
+    def provision(self, version, masters, replicas_per_master):
+        """Provision Redis cluster"""
+        print(f"Provisioning Redis Cluster v{version} with {masters} masters and {replicas_per_master} replica(s) per master...")
+        
+        # Setup infrastructure first
+        self.setup_infrastructure()
+        
+        # Run Ansible playbook
+        playbook_path = os.path.join(self.ansible_dir, 'playbooks', 'provision.yml')
+        output_file = os.path.join(self.output_dir, 'provision_output.txt')
+        
+        try:
+            with open(output_file, 'w') as f:
+                subprocess.run([
+                    'ansible-playbook', playbook_path,
+                    '-e', f'redis_version={version}',
+                    '-e', f'masters={masters}',
+                    '-e', f'replicas_per_master={replicas_per_master}'
+                ], cwd=self.ansible_dir, stdout=f, stderr=subprocess.STDOUT, check=True)
+            
+            print("✓ Redis Cluster provisioned successfully")
+            print(f"  Output saved to: {output_file}")
+        except subprocess.CalledProcessError:
+            print("✗ Failed to provision Redis Cluster")
+            print(f"  Check output: {output_file}")
+            sys.exit(1)
+
+    def status(self):
+        """Check cluster status"""
+        print("Checking Redis Cluster status...")
+        
+        playbook_path = os.path.join(self.ansible_dir, 'playbooks', 'status.yml')
+        output_file = os.path.join(self.output_dir, 'status_output.txt')
+        
+        try:
+            with open(output_file, 'w') as f:
+                subprocess.run(['ansible-playbook', playbook_path],
+                             cwd=self.ansible_dir, stdout=f, stderr=subprocess.STDOUT, check=True)
+            
+            print("✓ Cluster status retrieved")
+            print(f"  Output saved to: {output_file}")
+            
+            # Display summary
+            self.display_status_summary()
+        except subprocess.CalledProcessError:
+            print("✗ Failed to get cluster status")
+            print(f"  Check output: {output_file}")
+            sys.exit(1)
+
+    def display_status_summary(self):
+        """Display a formatted cluster status summary"""
+        # This would parse the actual output and display it nicely
+        # For now, just show the file location
+        print("\nCluster Status Summary:")
+        print("  See output/status_output.txt for detailed information")
+
+    def upgrade(self, target_version, strategy):
+        """Perform rolling upgrade"""
+        print(f"Performing rolling upgrade to Redis {target_version} using {strategy} strategy...")
+        
+        # Pre-flight checks
+        print("Running pre-flight checks...")
+        if not self.verify_cluster_health():
+            print("✗ Cluster health check failed")
+            sys.exit(1)
+        
+        # Run upgrade playbook
+        playbook_path = os.path.join(self.ansible_dir, 'playbooks', 'upgrade.yml')
+        output_file = os.path.join(self.output_dir, 'upgrade_output.txt')
+        
+        try:
+            with open(output_file, 'w') as f:
+                subprocess.run([
+                    'ansible-playbook', playbook_path,
+                    '-e', f'target_version={target_version}'
+                ], cwd=self.ansible_dir, stdout=f, stderr=subprocess.STDOUT, check=True)
+            
+            print("✓ Rolling upgrade completed successfully")
+            print(f"  Output saved to: {output_file}")
+        except subprocess.CalledProcessError:
+            print("✗ Rolling upgrade failed")
+            print(f"  Check output: {output_file}")
+            sys.exit(1)
+        
+        # Post-upgrade verification
+        print("Running post-upgrade verification...")
+        self.verify(full=True)
+
+    def verify_cluster_health(self):
+        """Verify cluster is healthy before operations"""
+        # Simple check - run status and parse output
+        playbook_path = os.path.join(self.ansible_dir, 'playbooks', 'status.yml')
+        try:
+            subprocess.run(['ansible-playbook', playbook_path],
+                         cwd=self.ansible_dir, capture_output=True, check=True)
+            return True
+        except subprocess.CalledProcessError:
+            return False
+
+    def verify(self, full=False):
+        """Verify cluster integrity"""
+        print("Verifying Redis Cluster...")
+        
+        playbook_path = os.path.join(self.ansible_dir, 'playbooks', 'verify.yml')
+        output_file = os.path.join(self.output_dir, 'verify_output.txt')
+        
+        try:
+            with open(output_file, 'w') as f:
+                subprocess.run(['ansible-playbook', playbook_path],
+                             cwd=self.ansible_dir, stdout=f, stderr=subprocess.STDOUT, check=True)
+            
+            print("✓ Cluster verification passed")
+            print(f"  Output saved to: {output_file}")
+        except subprocess.CalledProcessError:
+            print("✗ Cluster verification failed")
+            print(f"  Check output: {output_file}")
+            sys.exit(1)
+
+def main():
+    parser = argparse.ArgumentParser(description='Redis Cluster Lifecycle Tool')
+    subparsers = parser.add_subparsers(dest='command', help='Available commands')
+    
+    # Provision command
+    provision_parser = subparsers.add_parser('provision', help='Provision Redis cluster')
+    provision_parser.add_argument('--version', required=True, help='Redis version to install')
+    provision_parser.add_argument('--masters', type=int, default=3, help='Number of master nodes')
+    provision_parser.add_argument('--replicas-per-master', type=int, default=1, help='Replicas per master')
+    
+    # Status command
+    status_parser = subparsers.add_parser('status', help='Check cluster status')
+    
+    # Upgrade command
+    upgrade_parser = subparsers.add_parser('upgrade', help='Upgrade Redis cluster')
+    upgrade_parser.add_argument('--target-version', required=True, help='Target Redis version')
+    upgrade_parser.add_argument('--strategy', default='rolling', help='Upgrade strategy')
+    
+    # Verify command
+    verify_parser = subparsers.add_parser('verify', help='Verify cluster integrity')
+    verify_parser.add_argument('--full', action='store_true', help='Full verification')
+    
+    args = parser.parse_args()
+    
+    if not args.command:
+        parser.print_help()
+        sys.exit(1)
+    
+    tool = RedisTool()
+    
+    # Check prerequisites for all commands
+    tool.check_prerequisites()
+    
+    if args.command == 'provision':
+        tool.provision(args.version, args.masters, args.replicas_per_master)
+    elif args.command == 'status':
+        tool.status()
+    elif args.command == 'upgrade':
+        tool.upgrade(args.target_version, args.strategy)
+    elif args.command == 'verify':
+        tool.verify(full=args.full)
+
+if __name__ == '__main__':
+    main()

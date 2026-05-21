@@ -1,0 +1,49 @@
+---
+- name: Verify Redis Cluster
+  hosts: redis_cluster
+  become: yes
+  tasks:
+    - name: Get Redis cluster info
+      command: redis-cli CLUSTER INFO
+      register: cluster_info
+      run_once: true
+      delegate_to: redis-node-1
+
+    - name: Get Redis cluster nodes
+      command: redis-cli CLUSTER NODES
+      register: cluster_nodes
+      run_once: true
+      delegate_to: redis-node-1
+
+    - name: Check cluster state
+      debug:
+        msg: "Cluster State: {{ cluster_info.stdout | regex_search('cluster_state:(\\w+)', '\\1') | first }}"
+      run_once: true
+
+    - name: Verify data integrity
+      script: ../scripts/verify_data.sh
+      register: data_verify
+      run_once: true
+      delegate_to: redis-node-1
+
+    - name: Display data verification result
+      debug:
+        msg: "Data Integrity: {{ data_verify.stdout }}"
+      run_once: true
+
+    - name: Check Redis versions
+      command: redis-cli --version
+      register: redis_version
+
+    - name: Display Redis versions
+      debug:
+        msg: "{{ inventory_hostname }}: {{ redis_version.stdout }}"
+
+    - name: Verify all nodes have same version
+      assert:
+        that:
+          - redis_version.stdout == expected_version
+        fail_msg: "Version mismatch on {{ inventory_hostname }}"
+        success_msg: "All nodes have consistent version"
+      vars:
+        expected_version: "{{ hostvars[groups['redis_cluster'][0]]['redis_version']['stdout'] }}"

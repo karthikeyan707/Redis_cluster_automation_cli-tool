@@ -1,0 +1,81 @@
+version: '3.8'
+
+services:
+  redis-node-1:
+    image: ubuntu:22.04
+    container_name: redis-node-1
+    hostname: redis-node-1
+    networks:
+      redis-cluster:
+        ipv4_address: 10.10.0.11
+    privileged: true
+    volumes:
+      - ./ssh-keys:/root/.ssh:ro
+    command: /bin/bash -c "apt-get update && apt-get install -y openssh-server && mkdir -p /var/run/sshd && echo 'root:password' | chpasswd && sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && /usr/sbin/sshd -D"
+
+  redis-node-2:
+    image: ubuntu:22.04
+    container_name: redis-node-2
+    hostname: redis-node-2
+    networks:
+      redis-cluster:
+        ipv4_address: 10.10.0.12
+    privileged: true
+    volumes:
+      - ./ssh-keys:/root/.ssh:ro
+    command: /bin/bash -c "apt-get update && apt-get install -y openssh-server && mkdir -p /var/run/sshd && echo 'root:password' | chpasswd && sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && /usr/sbin/sshd -D"
+
+  redis-node-3:
+    image: ubuntu:22.04
+    container_name: redis-node-3
+    hostname: redis-node-3
+    networks:
+      redis-cluster:
+        ipv4_address: 10.10.0.13
+    privileged: true
+    volumes:
+      - ./ssh-keys:/root/.ssh:ro
+    command: /bin/bash -c "apt-get update && apt-get install -y openssh-server && mkdir -p /var/run/sshd && echo 'root:password' | chpasswd && sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && /usr/sbin/sshd -D"
+
+  redis-node-4:
+    image: ubuntu:22.04
+    container_name: redis-node-4
+    hostname: redis-node-4
+    networks:
+      redis-cluster:
+        ipv4_address: 10.10.0.14
+    privileged: true
+    volumes:
+      - ./ssh-keys:/root/.ssh:ro
+    command: /bin/bash -c "apt-get update && apt-get install -y openssh-server && mkdir -p /var/run/sshd && echo 'root:password' | chpasswd && sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && /usr/sbin/sshd -D"
+
+  redis-node-5:
+    image: ubuntu:22.04
+    container_name: redis-node-5
+    hostname: redis-node-5
+    networks:
+      redis-cluster:
+        ipv4_address: 10.10.0.15
+    privileged: true
+    volumes:
+      - ./ssh-keys:/root/.ssh:ro
+    command: /bin/bash -c "apt-get update && apt-get install -y openssh-server && mkdir -p /var/run/sshd && echo 'root:password' | chpasswd && sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && /usr/sbin/sshd -D"
+
+  redis-node-6:
+    image: ubuntu:22.04
+    container_name: redis-node-6
+    hostname: redis-node-6
+    networks:
+      redis-cluster:
+        ipv4_address: 10.10.0.16
+    privileged: true
+    volumes:
+      - ./ssh-keys:/root/.ssh:ro
+    command: /bin/bash -c "apt-get update && apt-get install -y openssh-server && mkdir -p /var/run/sshd && echo 'root:password' | chpasswd && sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && /usr/sbin/sshd -D"
+
+networks:
+  redis-cluster:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.10.0.0/24
