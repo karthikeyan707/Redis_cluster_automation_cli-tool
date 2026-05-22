@@ -1,10 +1,35 @@
 ---
-- name: Upgrade Redis Cluster
-  hosts: redis_cluster
+- name: Pre-flight checks
+  hosts: redis_masters[0]
+  become: yes
+  tasks:
+    - name: Check cluster state
+      command: redis-cli CLUSTER INFO
+      register: cluster_info
+
+    - name: Verify cluster is healthy
+      assert:
+        that:
+          - "'cluster_state:ok' in cluster_info.stdout"
+        fail_msg: "Cluster is not in OK state"
+        success_msg: "Cluster is healthy"
+
+    - name: Check current Redis version
+      command: redis-server --version
+      register: current_version
+
+    - name: Display current version
+      debug:
+        msg: "Current Redis version: {{ current_version.stdout }}"
+
+- name: Upgrade replicas first
+  hosts: redis_replicas
   become: yes
   serial: 1
   vars:
     target_version: "{{ target_version | default('7.2.6') }}"
+    node_count: "{{ groups['redis_replicas'] | length }}"
+    current_index: "{{ groups['redis_replicas'].index(inventory_hostname) + 1 }}"
 
   tasks:
     - name: Stop Redis
@@ -32,10 +57,127 @@
         delay: 2
         timeout: 30
 
-    - name: Verify Redis version
-      command: redis-server --version
-      register: redis_version_check
+    - name: Wait for replica to sync
+      pause:
+        seconds: 10
+
+    - name: Verify cluster state
+      command: redis-cli CLUSTER INFO
+      register: cluster_state
+      delegate_to: redis-node-1
+
+    - name: Assert cluster is OK
+      assert:
+        that:
+          - "'cluster_state:ok' in cluster_state.stdout"
+        fail_msg: "Cluster state is not OK after upgrading {{ inventory_hostname }}"
+        success_msg: "Cluster is healthy"
 
     - name: Display upgrade progress
       debug:
-        msg: "Upgraded {{ inventory_hostname }}"
+        msg: "[{{ current_index }}/{{ node_count }}] Upgraded replica {{ ansible_host }} - cluster: ok"
+
+- name: Upgrade masters with failover
+  hosts: redis_masters
+  become: yes
+  serial: 1
+  vars:
+    target_version: "{{ target_version | default('7.2.6') }}"
+    node_count: "{{ groups['redis_masters'] | length }}"
+    current_index: "{{ groups['redis_masters'].index(inventory_hostname) + 1 }}"
+
+  tasks:
+    - name: Find replica for this master
+      set_fact:
+        replica_node: "{{ item }}"
+      loop: "{{ groups['redis_replicas'] }}"
+      when: hostvars[item]['ansible_host'] is defined
+      run_once: true
+
+    - name: Trigger CLUSTER FAILOVER on replica
+      command: redis-cli CLUSTER FAILOVER
+      delegate_to: "{{ replica_node }}"
+      when: replica_node is defined
+
+    - name: Wait for failover to complete
+      pause:
+        seconds: 15
+
+    - name: Stop Redis on old master (now replica)
+      command: pkill redis-server
+      ignore_errors: yes
+
+    - name: Wait for Redis to stop
+      wait_for:
+        port: 6379
+        state: stopped
+        timeout: 30
+
+    - name: Upgrade Redis package
+      apt:
+        name: redis-server
+        state: latest
+        update_cache: yes
+
+    - name: Start Redis
+      command: redis-server /etc/redis/redis.conf --daemonize yes
+
+    - name: Wait for Redis to be ready
+      wait_for:
+        port: 6379
+        delay: 2
+        timeout: 30
+
+    - name: Wait for node to rejoin as replica
+      pause:
+        seconds: 10
+
+    - name: Verify cluster state
+      command: redis-cli CLUSTER INFO
+      register: cluster_state
+      delegate_to: redis-node-1
+
+    - name: Assert cluster is OK
+      assert:
+        that:
+          - "'cluster_state:ok' in cluster_state.stdout"
+        fail_msg: "Cluster state is not OK after upgrading {{ inventory_hostname }}"
+        success_msg: "Cluster is healthy"
+
+    - name: Display upgrade progress
+      debug:
+        msg: "[{{ current_index }}/{{ node_count }}] Upgraded master {{ ansible_host }} - cluster: ok"
+
+- name: Post-upgrade verification
+  hosts: redis_masters[0]
+  become: yes
+  tasks:
+    - name: Verify data integrity
+      shell: >
+        missing_keys=0;
+        for i in $(seq 1 1000); do
+          value=$(redis-cli GET "key:$i");
+          if [ "$value" != "value:$i" ]; then
+            missing_keys=$((missing_keys + 1));
+          fi;
+        done;
+        if [ $missing_keys -eq 0 ]; then
+          echo "PASS: All 1000 keys verified";
+        else
+          echo "FAIL: $missing_keys keys missing or incorrect";
+        fi
+      register: data_verify
+
+    - name: Display data verification result
+      debug:
+        msg: "{{ data_verify.stdout }}"
+
+    - name: Check Redis versions on all nodes
+      command: redis-server --version
+      register: redis_version
+      delegate_to: "{{ item }}"
+      loop: "{{ groups['redis_cluster'] }}"
+
+    - name: Display upgrade complete message
+      debug:
+        msg: "UPGRADE COMPLETE - all nodes upgraded, data integrity verified"

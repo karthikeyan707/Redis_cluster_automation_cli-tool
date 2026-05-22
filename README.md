@@ -6,6 +6,58 @@ A CLI tool that wraps Ansible to provision, operate, and perform rolling upgrade
 
 This tool manages a 6-node Redis Cluster (3 masters + 3 replicas) running inside containers (Docker or Podman) that simulate real servers with SSH access. Everything is driven through the CLI — no manual SSH, no manual redis-cli commands during operations.
 
+## Rolling Upgrade Strategy
+
+The upgrade implements a sophisticated zero-downtime strategy to ensure the cluster remains operational throughout the entire process:
+
+### Pre-flight Checks
+- Verify cluster is healthy (`cluster_state: ok`)
+- Verify all nodes are reachable
+- Verify current version differs from target version
+- Run data verify to establish pre-upgrade integrity baseline
+
+### Replica-First Upgrade
+Replicas are upgraded one at a time:
+1. Stop Redis on the replica node
+2. Install the new Redis version
+3. Start Redis with the same configuration
+4. Wait for the replica to rejoin the cluster and complete sync
+5. Verify cluster state is `ok` before moving to the next node
+6. Print progress: `[2/6] Upgraded replica 10.10.0.15 - cluster: ok`
+
+### Master Upgrade with CLUSTER FAILOVER
+Masters are upgraded one at a time with failover:
+1. Trigger `CLUSTER FAILOVER` on the replica (replica becomes the new master)
+2. Wait for failover to complete
+3. The old master is now a replica → stop Redis on it
+4. Install the new Redis version
+5. Start Redis, wait for it to rejoin as a replica
+6. Verify cluster state is `ok` before proceeding to the next master
+7. Print progress after each node
+
+### Post-Upgrade Verification
+- Run data verify (all 1000 keys must still be present and correct)
+- Run status (all nodes must show the new version)
+- Print: `UPGRADE COMPLETE - all nodes on v7.2.6, data integrity verified`
+
+### Failure Handling
+If any step fails:
+- Upgrade stops immediately (does not continue to the next node)
+- Prints which node failed and at which step
+- Leaves the cluster in whatever state it's in (no automatic rollback)
+
+### Assumptions and Trade-offs
+- **Assumption**: Containers have sufficient resources for Redis operations
+- **Trade-off**: Using apt package manager for Redis installation instead of building from source for faster deployment
+- **Trade-off**: Fixed wait times for sync and failover operations (10-15 seconds) rather than dynamic detection
+- **Limitation**: Does not implement automatic rollback on failure (manual intervention required)
+
+### Known Limitations
+- Upgrade process assumes cluster is healthy before starting
+- Fixed timeout values may need adjustment for slower hardware
+- No automatic rollback mechanism (manual intervention required if upgrade fails)
+- Requires manual cleanup if containers are in inconsistent state after failure
+
 ## Prerequisites
 
 - **Container Runtime**: Docker Engine or Podman (Podman is preferred as it's fully open source)
@@ -27,8 +79,6 @@ sudo apt-get install -y podman
 # Install Ansible
 pip install ansible
 
-# Install Python dependencies
-pip install PyPDF2  # For PDF reading if needed
 ```
 
 #### On macOS:
@@ -42,8 +92,6 @@ brew install podman
 # Install Ansible
 pip install ansible
 
-# Install Python dependencies
-pip install PyPDF2  # For PDF reading if needed
 ```
 
 ## Project Structure

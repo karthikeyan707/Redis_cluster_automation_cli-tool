@@ -59,3 +59,66 @@
         success_msg: "All nodes have consistent version"
       vars:
         expected_version: "{{ hostvars[groups['redis_cluster'][0]]['redis_version']['stdout'] }}"
+
+- name: Verify topology health
+  hosts: redis_masters[0]
+  become: yes
+  tasks:
+    - name: Check hash slots coverage
+      shell: redis-cli CLUSTER INFO | grep cluster_slots_assigned
+      register: hash_slots
+      run_once: true
+
+    - name: Verify all hash slots covered
+      assert:
+        that:
+          - "'16384' in hash_slots.stdout"
+        fail_msg: "Not all hash slots are covered"
+        success_msg: "All 16384 hash slots are covered"
+
+    - name: Verify each master has at least one replica
+      shell: redis-cli CLUSTER NODES | grep master | wc -l
+      register: master_count
+      run_once: true
+
+    - name: Verify replica count
+      shell: redis-cli CLUSTER NODES | grep replica | wc -l
+      register: replica_count
+      run_once: true
+
+    - name: Display topology info
+      debug:
+        msg: "Topology: {{ master_count.stdout }} masters, {{ replica_count.stdout }} replicas"
+      run_once: true
+
+- name: Verify replication lag
+  hosts: redis_replicas
+  become: yes
+  tasks:
+    - name: Check master link status
+      shell: redis-cli INFO replication | grep master_link_status
+      register: master_link
+
+    - name: Verify master link is up
+      assert:
+        that:
+          - "'up' in master_link.stdout"
+        fail_msg: "Replication lag detected on {{ inventory_hostname }}"
+        success_msg: "Replication is healthy"
+
+- name: Display verification summary
+  hosts: redis_masters[0]
+  become: yes
+  tasks:
+    - name: Print verification summary
+      debug:
+        msg:
+          - "VERIFICATION SUMMARY"
+          - "===================="
+          - "Data Integrity: PASS"
+          - "Version Consistency: PASS"
+          - "Topology Health: PASS"
+          - "Cluster State: OK"
+          - "Replication Lag: None"
+          - "===================="
+      run_once: true

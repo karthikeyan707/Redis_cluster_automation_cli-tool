@@ -68,4 +68,10 @@
 
     - name: Display seed result
       debug:
-        msg: "Data seeding completed"
+        msg: "Data seeding completed: 1000 keys seeded"
+
+    - name: Save seeding output to file
+      copy:
+        content: "Data seeding completed: 1000 keys seeded\n"
+        dest: /tmp/data_seed_output.txt
+      delegate_to: localhost

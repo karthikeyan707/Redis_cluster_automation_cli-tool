@@ -249,6 +249,7 @@ class RedisTool:
         except subprocess.CalledProcessError:
             print("✗ Rolling upgrade failed")
             print(f"  Check output: {output_file}")
+            print("  Upgrade stopped immediately. Cluster is in current state.")
             sys.exit(1)
         
         # Post-upgrade verification
