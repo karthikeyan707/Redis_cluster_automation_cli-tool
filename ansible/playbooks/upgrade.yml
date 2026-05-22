@@ -38,4 +38,4 @@
 
     - name: Display upgrade progress
       debug:
-        msg: "[{{ ansible_play_hosts | index(inventory_hostname) + 1 }}/{{ ansible_play_hosts | length }}] Upgraded {{ inventory_hostname }}"
+        msg: "Upgraded {{ inventory_hostname }}"
